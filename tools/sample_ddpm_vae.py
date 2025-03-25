@@ -5,7 +5,7 @@ import os
 import numpy as np
 from tqdm import tqdm
 from torch.optim import Adam
-from dataset.ADNI_dataset import AdniDataset
+from dataset.adni_dataset import AdniDataset
 from torch.utils.data import DataLoader
 from models.unet import UNet
 from scheduler.linear_noise_scheduler import LinearNoiseScheduler
@@ -72,7 +72,7 @@ def infer(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Arguments for ddpm image generation')
     parser.add_argument('--config', dest='config_path',
-                        default='config/default.yaml', type=str)
+                        default='config/mnist.yaml', type=str)
     args = parser.parse_args()
     infer(args)
 
@@ -262,6 +262,6 @@ if __name__ == '__main__':
 if __name__ == '__main__': # Run only when this file is run
     parser = argparse.ArgumentParser(description='Arguments for ddpm image generation')
     parser.add_argument('--config', dest='config_path',
-                        default='config/default.yaml', type=str)
+                        default='config/mnist.yaml', type=str)
     args = parser.parse_args()
     infer(args)

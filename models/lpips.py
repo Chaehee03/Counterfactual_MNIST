@@ -13,7 +13,7 @@ import torchvision
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def spatial_average(in_tens, keepdim=True):
-    pass
+    return in_tens.mean([2, 3], keepdim=keepdim)
 
 
 class vgg16(torch.nn.Module):
@@ -116,13 +116,14 @@ class LPIPS(nn.Module):
             diffs[kk] = (feats0[kk] - feats1[kk]) ** 2
 
         # 1*1 convolution followed by spatial average on the square differences
+        # list composed of tensor (B, 1, 1, 1)
         res = [spatial_average(self.lins[kk](diffs[kk]), keepdim=True) for kk in range(self.L)]
-        val = 0
+        val = torch.zeros_like(res[0].shape)
 
         # Aggregate the results of each layer
         for l in range(self.L):
             val += res[l]
-        return val
+        return val # tensor with shape (B, 1, 1, 1)
 
 
 class ScalingLayer(nn.Module):
