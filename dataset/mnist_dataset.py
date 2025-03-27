@@ -1,11 +1,11 @@
 import glob
 import os
 import torchvision
+import torchvision.transforms as transforms
 from PIL import Image
 from tqdm import tqdm
 from utils.diffusion_utils import load_latents
 from torch.utils.data.dataset import Dataset
-
 
 class MnistDataset(Dataset):
     r"""
@@ -45,6 +45,14 @@ class MnistDataset(Dataset):
                 print('Found {} latents'.format(len(self.latent_maps)))
             else:
                 print('Latents not found')
+
+        # Download Mnist Dataset
+        transform = transforms.Compose([
+            transforms.ToTensor(),  # transform to range [0, 1]
+            transforms.Lambda(lambda x: (x * 2) - 1)  # transform to range [-1, 1]
+        ])
+        self.dataset = torchvision.datasets.MNIST(root=im_path, train=(split == 'train'),
+                                                  download=True, transform=transform)
 
     def load_images(self, im_path):
         r"""
