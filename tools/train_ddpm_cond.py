@@ -1,7 +1,5 @@
-import torch
 import yaml
 import argparse
-import os
 import numpy as np
 from tqdm import tqdm
 from torch.optim import Adam

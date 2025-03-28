@@ -1,5 +1,3 @@
-from statistics import variance
-
 import torch
 
 class LinearNoiseScheduler:

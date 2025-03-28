@@ -46,14 +46,6 @@ class MnistDataset(Dataset):
             else:
                 print('Latents not found')
 
-        # Download Mnist Dataset
-        transform = transforms.Compose([
-            transforms.ToTensor(),  # transform to range [0, 1]
-            transforms.Lambda(lambda x: (x * 2) - 1)  # transform to range [-1, 1]
-        ])
-        self.dataset = torchvision.datasets.MNIST(root=im_path, train=(split == 'train'),
-                                                  download=True, transform=transform)
-
     def load_images(self, im_path):
         r"""
         Gets all images from the path specified

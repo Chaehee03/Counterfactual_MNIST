@@ -7,13 +7,12 @@ import os
 import numpy as np
 import tqdm
 
-from dataset.adni_dataset import AdniDataset
 from models.lpips import LPIPS
 from models.vae import VAE
 from models.discriminator import Discriminator
 from torch.utils.data.dataloader import DataLoader
 from dataset.mnist_dataset import MnistDataset
-from dataset.adni_dataset import AdniDataset
+# from dataset.adni_dataset import AdniDataset
 from torch.optim import Adam
 from torchvision.utils import make_grid
 
