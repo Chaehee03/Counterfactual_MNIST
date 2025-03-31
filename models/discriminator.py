@@ -24,11 +24,11 @@ class Discriminator(nn.Module):
             for i in range(len(layers_dim) - 1)
         ])
 
-        def forward(self, x):
-            out = x
-            for layer in self.layers:
-                out = layer(out)
-            return out
+    def forward(self, x):
+        out = x
+        for layer in self.layers:
+            out = layer(out)
+        return out
 
 if __name__ == '__main__':
     # test code

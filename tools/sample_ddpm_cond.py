@@ -26,8 +26,8 @@ def sample(model, scheduler, train_config, ldm_config,
     condition_config = get_config_value(ldm_config, key='condition_config', default_value=None)
     assert condition_config is not None, ("This sampling script is for class conditioning, "
                                           "but condition config not found")
-    condition_type = get_config_value(condition_config, 'condition_types', [])
-    assert 'class' in condition_config, ("This sampling script is for class conditioning, "
+    condition_types = get_config_value(condition_config, 'condition_types', [])
+    assert 'class' in condition_types, ("This sampling script is for class conditioning, "
                                          "but class condition not found in config")
     validate_class_config(condition_config)
     ############################################################
@@ -80,10 +80,8 @@ def sample(model, scheduler, train_config, ldm_config,
         grid = make_grid(ims, nrow=train_config['num_grid_rows']) # number of images per 1 row
         img = torchvision.transforms.ToPILImage()(grid) # PIL (pytorch imaging library object
 
-
-
-        if not os.path.exists(os.path.join(train_config['task_name'], 'samples')):
-            os.mkdir(os.path.join(train_config['task_name'], 'samples'))
+        if not os.path.exists(os.path.join(train_config['task_name'], 'samples_cond')):
+            os.mkdir(os.path.join(train_config['task_name'], 'samples_cond'))
         img.save(os.path.join(train_config['task_name'], 'samples', 'x0_{}.png'.format(i)))
         img.close() # free memories for image object
 
@@ -117,11 +115,12 @@ def infer(args):
               model_config=vae_config).to(device)
     vae.eval()
 
-    if os.path.exists(os.path.join(train_config['task_name'], train_config['vae_autoencoder_ckpt_name'])):
+    # Load pretrained vae if checkpoint exists
+    vae_checkpoint = os.path.join(train_config['task_name'],
+                                  train_config['vae_autoencoder_ckpt_name'])
+    if os.path.exists(vae_checkpoint):
         print('Loaded vae checkpoint')
-        vae.load_state_dict(torch.load(os.path.join(train_config['task_name'],
-                                                   train_config['vae_autoencoder_ckpt_name']),
-                                      map_location=device), strict=True)
+        vae.load_state_dict(torch.load(vae_checkpoint, map_location=device)['model_state_dict'])
 
     # Load pretrained weights to UNet #
     unet = UNet(im_channels=vae_config['z_channels'],
@@ -137,7 +136,7 @@ def infer(args):
         # pretrained wights(OrderedDict type) -> state_dict
         # model.load_state_dict(): Load pretrained wights to instantiated model.
         unet.load_state_dict(torch.load(os.path.join(train_config['task_name'],
-                                                  train_config['ldm_ckpt_name']), map_location=device))
+                                                  train_config['ldm_ckpt_name']), map_location=device), strict=False)
 
 
     with torch.no_grad(): # deactivate autograd (not training -> not save gradient)

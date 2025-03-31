@@ -14,12 +14,12 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def sample(model, scheduler, train_config, ldm_config,
            vae_config, diffusion_config, dataset_config, vae):
 
-    im_size = dataset_config['im_size'] // 2**sum(vae_config['down_sample'])
+    latent_im_size = dataset_config['im_size'] // 2**sum(vae_config['down_sample'])
 
     xt = torch.randn((train_config['num_samples'],
                       vae_config['z_channels'],
-                      im_size,
-                      im_size)).to(device)
+                      latent_im_size,
+                      latent_im_size)).to(device)
 
     # predict noise at timestep & predict previous, x0 images
     for i in tqdm(reversed(range(diffusion_config['num_timesteps']))):
@@ -83,11 +83,12 @@ def infer(args):
               model_config=vae_config).to(device)
     vae.eval()
 
-    if os.path.exists(os.path.join(train_config['task_name'], train_config['vae_autoencoder_ckpt_name'])):
+    # Load pretrained vae if checkpoint exists
+    vae_checkpoint = os.path.join(train_config['task_name'],
+                                  train_config['vae_autoencoder_ckpt_name'])
+    if os.path.exists(vae_checkpoint):
         print('Loaded vae checkpoint')
-        vae.load_state_dict(torch.load(os.path.join(train_config['task_name'],
-                                                   train_config['vae_autoencoder_ckpt_name']),
-                                      map_location=device), strict=True)
+        vae.load_state_dict(torch.load(vae_checkpoint, map_location=device)['model_state_dict'])
 
     # Load pretrained weights to UNet #
     unet = UNet(im_channels=vae_config['z_channels'],
@@ -103,7 +104,7 @@ def infer(args):
         # pretrained wights(OrderedDict type) -> state_dict
         # model.load_state_dict(): Load pretrained wights to instantiated model.
         unet.load_state_dict(torch.load(os.path.join(train_config['task_name'],
-                                                  train_config['ldm_ckpt_name']), map_location=device))
+                                                  train_config['ldm_ckpt_name']), map_location=device), strict=False)
 
 
     with torch.no_grad(): # deactivate autograd (not training -> not save gradient)

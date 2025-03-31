@@ -73,48 +73,48 @@ class VAE(nn.Module):
                                               norm_channels=self.norm_channels))
         self.decoder_layers = nn.ModuleList([])
         for i in reversed(range(1, len(self.down_channels))):
-            self.decoder_layers.append(Upblock(self.down_channels[i], self.down_channels[i - 1],
+            self.decoder_layers.append(UpBlock(self.down_channels[i], self.down_channels[i - 1],
                                                t_emb_dim=None,up_sample=self.down_sample[i - 1],
                                                num_heads=self.num_heads,
                                                num_layers=self.num_up_layers,
-                                               attn=self.attns[i - 1],
+                                               attn = self.attns[i - 1],
                                                norm_channels=self.norm_channels))
 
             self.decoder_norm_out = nn.GroupNorm(self.norm_channels, self.down_channels[0])
             self.decoder_conv_out = nn.Conv2d(self.down_channels[0], im_channels, kernel_size=3, stride=1, padding=1)
 
-        def encode(self, x):
-            out = self.encoder_conv_in(x)
-            for down in self.encoder_layers:
-                out = down(out)
-            for mid in self.encoder_mids:
-                out = mid(out)
-            out = self.encoder_norm_out(out)
-            out = nn.SiLU()(out)
-            out = self.encoder_conv_out(out)
-            out = self.pre_quant_conv(out)
-            # chunk tensor by 2 at dimension level
-            mean, logvar = torch.chunk(out, 2, dim=1)
-            std = torch.exp(0.5 * logvar)
-            # reparameterization trick
-            sample = mean + std*torch.randn(mean.shape).to(device=x.device) # std.shape == mean.shape
-            return sample, mean, logvar # latent variable(z), mean, logvar
+    def encode(self, x):
+        out = self.encoder_conv_in(x)
+        for down in self.encoder_layers:
+            out = down(out)
+        for mid in self.encoder_mids:
+            out = mid(out)
+        out = self.encoder_norm_out(out)
+        out = nn.SiLU()(out)
+        out = self.encoder_conv_out(out)
+        out = self.pre_quant_conv(out)
+        # chunk tensor by 2 at dimension level
+        mean, logvar = torch.chunk(out, 2, dim=1)
+        std = torch.exp(0.5 * logvar)
+        # reparameterization trick
+        sample = mean + std*torch.randn(mean.shape).to(device=x.device) # std.shape == mean.shape
+        return sample, mean, logvar # latent variable(z), mean, logvar
 
-        def decode(self, z):
-            out = z
-            out = self.post_quant_conv(out)
-            out = self.decoder_conv_in(out)
-            for mid in self.decoder_mids:
-                out = mid(out)
-            for up in self.decoder_layers:
-                out = up(out)
+    def decode(self, z):
+        out = z
+        out = self.post_quant_conv(out)
+        out = self.decoder_conv_in(out)
+        for mid in self.decoder_mids:
+            out = mid(out)
+        for up in self.decoder_layers:
+            out = up(out)
 
-            out = self.decoder_norm_out(out)
-            out = nn.SiLU()(out)
-            out = self.decoder_conv_out(out)
-            return out
+        out = self.decoder_norm_out(out)
+        out = nn.SiLU()(out)
+        out = self.decoder_conv_out(out)
+        return out
 
-        def forward(self, x):
-            z, mean, logvar = self.encode(x)
-            out = self.decode(z)
-            return out, mean, logvar
+    def forward(self, x):
+        z, mean, logvar = self.encode(x)
+        out = self.decode(z)
+        return out, mean, logvar

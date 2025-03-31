@@ -17,8 +17,8 @@ class LinearNoiseScheduler:
         original_shape = original.shape
         batch_size = original_shape[0]
 
-        sqrt_alpha_cum_prod = self.sqrt_alpha_cum_prod[t].reshape(batch_size)
-        sqrt_one_minus_alpha_cum_prod = self.sqrt_one_minus_alpha_cum_prod[t].reshape(batch_size)
+        sqrt_alpha_cum_prod = self.sqrt_alpha_cum_prod.to(original.device)[t].reshape(batch_size)
+        sqrt_one_minus_alpha_cum_prod = self.sqrt_one_minus_alpha_cum_prod.to(original.device)[t].reshape(batch_size)
 
         for _ in range(len(original_shape)-1):
             sqrt_alpha_cum_prod = sqrt_alpha_cum_prod.unsqueeze(-1)
@@ -28,17 +28,17 @@ class LinearNoiseScheduler:
 
     # reverse process
     def sample_prev_timestep(self, xt, noise_pred, t):
-        x0 = (xt - (self.sqrt_one_minus_alpha_cum_prod[t] * noise_pred)) / self.sqrt_alpha_cum_prod[t]
+        x0 = (xt - (self.sqrt_one_minus_alpha_cum_prod.to(xt.device)[t] * noise_pred)) / self.sqrt_alpha_cum_prod.to(xt.device)[t]
         x0 = torch.clamp(x0, -1., 1.)
 
-        mean = xt - ((self.betas[t] * noise_pred) / (self.sqrt_one_minus_alpha_cum_prod[t]))
-        mean = mean / torch.sqrt(self.alphas[t])
+        mean = xt - ((self.betas.to(xt.device)[t] * noise_pred) / (self.sqrt_one_minus_alpha_cum_prod.to(xt.device)[t]))
+        mean = mean / torch.sqrt(self.alphas.to(xt.device)[t])
 
         if t == 0:
             return mean, x0
         else:
-            variance = (1 - self.alpha_cum_prod[t-1]) / (1. - self.alpha_cum_prod[t])
-            variance = variance * self.betas[t]
+            variance = (1 - self.alpha_cum_prod.to(xt.device)[t-1]) / (1. - self.alpha_cum_prod.to(xt.device)[t])
+            variance = variance * self.betas.to(xt.device)[t]
             sigma = variance ** 0.5
             z = torch.randn(xt.shape).to(xt.device)
             return mean + sigma*z, x0

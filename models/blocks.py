@@ -73,7 +73,7 @@ class DownBlock(nn.Module):
         self.down_sample_conv = nn.Conv2d(out_channels, out_channels, kernel_size=4,
                                           stride=2, padding=1) if self.down_sample else nn.Identity()
 
-    def forward(self, x, t_emb):
+    def forward(self, x, t_emb=None):
         out = x
 
         for i in range(self.num_layers):
@@ -83,7 +83,8 @@ class DownBlock(nn.Module):
             out = self.resnet_conv_first[i](out) # (B, out_channels, H, W)
             # [:, :, None, None]: keep two dimension + add two dimension (default value: 1)
             # (B, t_emb_dim) -> (B, out_channels) -> (B, out_channels, 1, 1)
-            out = out + self.t_emb_layers[i](t_emb)[:, :, None, None] # time embedding (broad casting)
+            if self.t_emb_dim is not None:
+                out = out + self.t_emb_layers[i](t_emb)[:, :, None, None] # time embedding (broad casting)
             out = self.resnet_conv_second[i](out)
             out = out + self.residual_input_conv[i](resnet_input) # skip connection
 
@@ -153,7 +154,7 @@ class MidBlock(nn.Module):
             ]
         )
 
-    def forward(self, x, t_emb):
+    def forward(self, x, t_emb=None):
         out = x
         # first resnet block
         resnet_input = out
@@ -183,6 +184,7 @@ class MidBlock(nn.Module):
             out = out + self.residual_input_conv[i+1](resnet_input)
 
         return out
+
 
 class UpBlock(nn.Module):
     def __init__(self, in_channels, out_channels, t_emb_dim,
@@ -243,7 +245,7 @@ class UpBlock(nn.Module):
                 for i in range(num_layers)
             ]
         )
-        self.up_sample_conv = nn.ConvTranspose2d(in_channels // 2, in_channels // 2, kernel_size=4,
+        self.up_sample_conv = nn.ConvTranspose2d(in_channels, in_channels, kernel_size=4,
                                                  stride=2, padding=1) if self.up_sample else nn.Identity()
 
     def forward(self, x, out_down=None, t_emb=None):

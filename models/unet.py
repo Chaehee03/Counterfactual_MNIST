@@ -51,10 +51,11 @@ class UNet(nn.Module):
 
         self.ups = nn.ModuleList([])
         for i in reversed(range(len(self.down_channels) - 1)):
-            self.ups.append(UpBlock(self.down_channels[i]*2, self.down_channels[i-1] if i != 0 else 16,
+            self.ups.append(UpBlock(self.down_channels[i]*2, self.down_channels[i-1] if i != 0 else self.conv_out_channels,
                                     self.t_emb_dim, up_sample=self.down_sample[i],
                                     num_heads=self.num_heads,
                                     num_layers=self.num_up_layers,
+                                    attn = 1 - self.attns[i],
                                     norm_channels=self.norm_channels))
 
             self.norm_out = nn.GroupNorm(self.norm_channels, self.conv_out_channels)
@@ -68,20 +69,20 @@ class UNet(nn.Module):
         down_outs = []
         # down-sampling (repeat 3 times)
         for down in self.downs: # down: variable assigned DownBlock instance(module)
-            print(out.shape)
+            # print(out.shape)
             down_outs.append(out)
             out = down(out, t_emb) # call forward method & assign down-sampled result to out variable
 
         # bottleneck (repeat 2 times)
         for mid in self.mids:
-            print(out.shape)
+            # print(out.shape)
             out = mid(out, t_emb)
 
         # up-samplig (repeat 3 times)
         for up in self.ups: # up: variable assigned UpBlock instance(module)
             down_out = down_outs.pop()
-            print(out, down_out.shape)
-            out = up(out, down_out, ) # call forward method (conduct skip connection) & , assign up-sampled result to out variable
+            # print(out, down_out.shape)
+            out = up(out, down_out, t_emb) # call forward method (conduct skip connection) & , assign up-sampled result to out variable
         out = self.norm_out(out)
         out = nn.SiLU()(out)
         out = self.conv_out(out)

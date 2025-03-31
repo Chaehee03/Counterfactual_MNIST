@@ -43,21 +43,21 @@ class vgg16(torch.nn.Module):
             for param in self.parameters():
                 param.requires_grad = False
 
-        def forward(self, x):
-            # Return output of vgg features
-            h = self.slic1(x)
-            h_relu1_2 = h
-            h = self.slice2(h)
-            h_relu2_2 = h
-            h = self.slice3(h)
-            h_relu3_3 = h
-            h = self.slice4(h)
-            h_relu4_3 = h
-            h = self.slice5(h)
-            h_relu5_3 = h
-            vgg_outputs = namedtuple("VggOutput", ['relu1_2', 'relu2_2', 'relu3_3', 'relu4_3', 'relu5_3'])
-            out = vgg_outputs(h_relu1_2, h_relu2_2, h_relu3_3, h_relu4_3, h_relu5_3)
-            return out
+    def forward(self, x):
+        # Return output of vgg features
+        h = self.slice1(x)
+        h_relu1_2 = h
+        h = self.slice2(h)
+        h_relu2_2 = h
+        h = self.slice3(h)
+        h_relu3_3 = h
+        h = self.slice4(h)
+        h_relu4_3 = h
+        h = self.slice5(h)
+        h_relu5_3 = h
+        vgg_outputs = namedtuple("VggOutput", ['relu1_2', 'relu2_2', 'relu3_3', 'relu4_3', 'relu5_3'])
+        out = vgg_outputs(h_relu1_2, h_relu2_2, h_relu3_3, h_relu4_3, h_relu5_3)
+        return out
 
 
 # Learned perceptual metric
@@ -118,7 +118,7 @@ class LPIPS(nn.Module):
         # 1*1 convolution followed by spatial average on the square differences
         # list composed of tensor (B, 1, 1, 1)
         res = [spatial_average(self.lins[kk](diffs[kk]), keepdim=True) for kk in range(self.L)]
-        val = torch.zeros_like(res[0].shape)
+        val = torch.zeros_like(res[0])
 
         # Aggregate the results of each layer
         for l in range(self.L):
@@ -132,8 +132,8 @@ class ScalingLayer(nn.Module):
         # Imagnet normalization for (0-1)
         # mean = [0.485, 0.456, 0.406]
         # std = [0.229, 0.224, 0.225]
-        self.register_buffer('shift', torch.Tensor([-.030, -.088, -.188][None, :, None, None]))
-        self.register_buffer('scale', torch.Tensor([.458, .448, .450][None, :, None, None]))
+        self.register_buffer('shift', torch.Tensor([-.030, -.088, -.188])[None, :, None, None])
+        self.register_buffer('scale', torch.Tensor([.458, .448, .450])[None, :, None, None])
 
     def forward(self, input):
         return (input - self.shift) / self.scale

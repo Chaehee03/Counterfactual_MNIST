@@ -4,9 +4,9 @@ import numpy as np
 from tqdm import tqdm
 from torch.optim import Adam
 from dataset.mnist_dataset import MnistDataset
-from dataset.adni_dataset import AdniDataset
+# from dataset.adni_dataset import AdniDataset
 from torch.utils.data import DataLoader
-from models.unet import UNet
+from models.unet_cond import UNet
 from models.vae import VAE
 from scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from utils.config_utils import *
@@ -43,7 +43,7 @@ def train(args):
     # Create the dataset #
     im_dataset_cls = {
         'mnist': MnistDataset,
-        'adni': AdniDataset
+        # 'adni': AdniDataset
     }.get(dataset_config['name'])
 
     im_dataset = im_dataset_cls(split = 'train',
@@ -85,7 +85,7 @@ def train(args):
 
     # Specify training parameters
     num_epochs = train_config['ldm_epochs']
-    optimizer = Adam(model.parameters(), lr=train_config['ldm_lr'])
+    optimizer = Adam(unet.parameters(), lr=train_config['ldm_lr'])
     criterion = torch.nn.MSELoss()
 
     # Freeze VAE parameters

@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
-from numpy.core.einsumfunc import einsum
 
 from models.blocks import get_time_embedding
 from models.blocks import DownBlock, MidBlock, UpBlock
+from utils.config_utils import *
 
 
 
@@ -29,7 +29,22 @@ class UNet(nn.Module):
         assert len(self.attns) == len(self.down_channels) - 1
 
         # Conditioning Config #
-        self.class_cond = True
+        self.class_cond = False
+        self.condition_config = get_config_value(model_config, 'condition_config', None)
+        if self.condition_config is not None:
+            assert 'condition_types' in self.condition_config, 'Condition Type not provided in model config'
+            condition_types = self.condition_config['condition_types']
+            if 'class' in condition_types:
+                validate_class_config(self.condition_config)
+                self.class_cond = True
+                self.num_classes = self.condition_config['class_condition_config']['num_classes']
+
+        if self.class_cond:
+            # Covert classes to one-hot encoded vectors.
+            # We don't need an extra null class,
+            # jus by adding all zero embedded vector for unconditional generation.
+            self.class_emb = nn.Embedding(self.num_classes,
+                                          self.t_emb_dim)
 
         self.t_proj = nn.Sequential(
             nn.Linear(self.t_emb_dim, self.t_emb_dim),
@@ -57,10 +72,11 @@ class UNet(nn.Module):
 
         self.ups = nn.ModuleList([])
         for i in reversed(range(len(self.down_channels) - 1)):
-            self.ups.append(UpBlock(self.down_channels[i]*2, self.down_channels[i-1] if i != 0 else 16,
+            self.ups.append(UpBlock(self.down_channels[i]*2, self.down_channels[i-1] if i != 0 else self.conv_out_channels,
                                     self.t_emb_dim, up_sample=self.down_sample[i],
                                     num_heads=self.num_heads,
                                     num_layers=self.num_up_layers,
+                                    attn=1 - self.attns[i],
                                     norm_channels=self.norm_channels))
 
             self.norm_out = nn.GroupNorm(self.norm_channels, self.conv_out_channels)
@@ -73,27 +89,27 @@ class UNet(nn.Module):
 
         ########## Class Conditioning #########
         if self.class_cond:
-            class_embed = einsum(cond_input['class'].float(), self.class_emb_weight, 'b n, n d -> b d')
+            class_embed = torch.einsum('b n, n d -> b d', cond_input['class'].float(), self.class_emb.weight)
             t_emb += class_embed
         #######################################
 
         down_outs = []
         # down-sampling (repeat 3 times)
         for down in self.downs: # down: variable assigned DownBlock instance(module)
-            print(out.shape)
+            # print(out.shape)
             down_outs.append(out)
             out = down(out, t_emb) # call forward method & assign down-sampled result to out variable
 
         # bottleneck (repeat 2 times)
         for mid in self.mids:
-            print(out.shape)
+            # print(out.shape)
             out = mid(out, t_emb)
 
         # up-samplig (repeat 3 times)
         for up in self.ups: # up: variable assigned UpBlock instance(module)
             down_out = down_outs.pop()
-            print(out, down_out.shape)
-            out = up(out, down_out, ) # call forward method (conduct skip connection) & , assign up-sampled result to out variable
+            # print(out, down_out.shape)
+            out = up(out, down_out, t_emb) # call forward method (conduct skip connection) & , assign up-sampled result to out variable
         out = self.norm_out(out)
         out = nn.SiLU()(out)
         out = self.conv_out(out)
