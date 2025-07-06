@@ -1,26 +1,16 @@
 import torch
 import torchvision
-import yaml
-import argparse
 import os
 from torchvision.utils import make_grid
 from tqdm import tqdm
-from models.unet_cond import UNet
-from models.vae import VAE
-from scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from utils.config_utils import get_config_value, validate_class_config
+from PIL import Image
+import matplotlib.pyplot as plt
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def sample(model, scheduler, train_config, ldm_config,
-           vae_config, diffusion_config, dataset_config, vae):
 
-    im_size = dataset_config['im_size'] // 2**sum(vae_config['down_sample'])
-
-    xt = torch.randn((train_config['num_samples'],
-                      vae_config['z_channels'],
-                      im_size,
-                      im_size)).to(device)
+def sample(unet, scheduler, im, train_config, ldm_config, diffusion_config, vae, idx):
 
     ################### Validate the config ###################
     condition_config = get_config_value(ldm_config, key='condition_config', default_value=None)
@@ -34,14 +24,14 @@ def sample(model, scheduler, train_config, ldm_config,
 
     ################# Create Conditional Input ##################
     num_classes = condition_config['class_condition_config']['num_classes']
-    sample_classes = torch.randint(0, num_classes, (train_config['num_samples'],))
-    print('Generating images for class {}'.format(list(sample_classes.numpy())))
+    sample_classes = torch.arange(num_classes, device=device)
+    print('Generating images for class {}'.format(list(sample_classes.cpu().numpy())))
     cond_input = {
-        'class': torch.nn.functional.one_hot(sample_classes, num_classes).to(device) # 1D tensor of classes to be one-hot encode, total length of 1 one-hot vector
+        'class': torch.nn.functional.one_hot(sample_classes, num_classes).to(device)
     }
     # Unconditional input for classifier-free guidance
     uncond_input = {
-        'class': cond_input['class'] * 0 # makes one-hot encoded vector all zero vector
+        'class': cond_input['class'] * 0
     }
     #############################################################
 
@@ -49,104 +39,91 @@ def sample(model, scheduler, train_config, ldm_config,
     # To enable it, change value in config, or change below default value.
     cf_guidance_scale = get_config_value(train_config, 'cf_guidance_scale', 1.0)
 
+    # Repeat input image to match condition batch size
+    im = im.repeat(len(sample_classes), 1, 1, 1)  # [10, 1, 28, 28]
+
+    with torch.no_grad():
+        z, _, _ = vae.encode(im)
+
+    # Sample random noise
+    noise = torch.randn_like(z).to(device)
+
+    # Sample timestep
+    t = torch.randint(0, diffusion_config['num_timesteps'], (z.shape[0],)).to(device)
+
+    xt = scheduler.add_noise(z, noise, t)
+
     # predict noise at timestep & predict previous, x0 images
     for i in tqdm(reversed(range(diffusion_config['num_timesteps']))):
         # Get prediction of noise
-        t = (torch.ones(xt.shape[0],)*i).long().to(device)
-        noise_pred_cond = model(xt, t, cond_input) # i(scalar) -> i(tensor) -> [i] (1D tensor, shape:(1,))
+        t = torch.full((xt.shape[0],), i, device=device, dtype=torch.long)
+        # t = (torch.ones(xt.shape[0],)*i).long().to(device)
+        noise_pred_cond = unet(xt, t, cond_input) # i(scalar) -> i(tensor) -> [i] (1D tensor, shape:(1,))
 
         if cf_guidance_scale > 1: # enabled
-            noise_pred_uncond = model(xt, t, uncond_input)
+            noise_pred_uncond = unet(xt, t, uncond_input)
             noise_pred = noise_pred_uncond + cf_guidance_scale * (noise_pred_cond - noise_pred_uncond)
         else:
             noise_pred = noise_pred_cond
 
         # Use scheduler to get x0 and xt-1
-        xt, x0_pred = scheduler.sample_prev_timestep(xt, noise_pred, torch.as_tensor(i).to(device))
+        xt, x0_pred = scheduler.sample_prev_timestep(xt, noise_pred, t)
 
         # Save x0
-        ims = torch.clamp(xt, -1., 1.).detach().cpu()
+        cf_image = torch.clamp(xt, -1., 1.).detach().cpu()
         if i == 0:
             # Decode only the final image to save time
-            ims = vae.decode(x0_pred)
+            cf_image = vae.decode(x0_pred)
         else:
-            ims = xt
+            cf_image = xt
         # restrict value range of tensor
         # detach current tensor from gradient calculation (no more backpropagation)
         # PIL require CPU environment
-        ims = torch.clamp(ims, -1., 1.).detach().cpu()
-        # [-1, 1] (representation for NN training) -> [0, 1] (representation to transform to PIL image)
-        ims = (ims + 1) / 2
-        grid = make_grid(ims, nrow=train_config['num_grid_rows']) # number of images per 1 row
-        img = torchvision.transforms.ToPILImage()(grid) # PIL (pytorch imaging library object
 
-        if not os.path.exists(os.path.join(train_config['task_name'], 'samples_cond')):
-            os.mkdir(os.path.join(train_config['task_name'], 'samples_cond'))
-        img.save(os.path.join(train_config['task_name'], 'samples', 'x0_{}.png'.format(i)))
-        img.close() # free memories for image object
+    cf_image = torch.clamp(cf_image, -1., 1.).detach().cpu()
+    # [-1, 1] (representation for NN training) -> [0, 1] (representation to transform to PIL image)
+    cf_image = (cf_image + 1) / 2
 
-def infer(args):
-    # Read the config file #
-    with open(args.config_path, 'r') as file:
-        try:
-            config = yaml.safe_load(file)
-        except yaml.YAMLError as exc:
-            print(exc)
-    print(config)
-    ########################
+    with torch.no_grad():
+        input_img = vae.decode(z)
+    input_img = torch.clamp(input_img, -1., 1.).detach().cpu()
+    cf_map = cf_image - input_img
 
-    diffusion_config = config['diffusion_params']
-    dataset_config = config['dataset_params']
-    ldm_config = config['ldm_params']
-    vae_config = config['vae_params']
-    train_config = config['train_params']
+    # Counterfactual Map Visualization
+    save_dir = os.path.join(train_config['task_name'], 'tmp')
+    os.makedirs(save_dir, exist_ok=True)
+    temp_path = os.path.join(save_dir, 'temp_cf_map.png')
+    grid_cf = make_grid(cf_map, nrow=5, normalize=True, scale_each=True).permute(1, 2, 0).squeeze().cpu().numpy()
+    plt.figure(figsize=(6, 2))
+    plt.axis('off')
+    plt.imshow(grid_cf, cmap='seismic', vmin=-1, vmax=1)
+    plt.savefig(temp_path, bbox_inches='tight', pad_inches=0)
+    plt.close()
 
-    # Create output directories
-    if not os.path.exists(train_config['task_name']):
-        os.mkdir(train_config['task_name'])
+    img_cf = Image.open(temp_path)
 
-    # Create the noise scheduler
-    scheduler = LinearNoiseScheduler(num_timesteps=diffusion_config['num_timesteps'],
-                                     beta_start=diffusion_config['beta_start'],
-                                     beta_end=diffusion_config['beta_end'])
+    h_target = img_cf.height
+    w_target = h_target
 
-    # Load pretrained weights to VAE #
-    vae = VAE(im_channels=dataset_config['im_channels'],
-              model_config=vae_config).to(device)
-    vae.eval()
+    # Counterfactual Image Visualization
+    grid_im = make_grid(cf_image, nrow=5)  # 2 rows × 5 columns = 10 classes
+    img = torchvision.transforms.ToPILImage()(grid_im) # PIL
+    img = img.resize((img_cf.width, h_target))
 
-    # Load pretrained vae if checkpoint exists
-    vae_checkpoint = os.path.join(train_config['task_name'],
-                                  train_config['vae_autoencoder_ckpt_name'])
-    if os.path.exists(vae_checkpoint):
-        print('Loaded vae checkpoint')
-        vae.load_state_dict(torch.load(vae_checkpoint, map_location=device)['model_state_dict'])
+    # Original Input Image Visualization
+    img_input = torchvision.transforms.ToPILImage()(im[0].cpu())
+    img_input_resized = img_input.resize((w_target, h_target))
 
-    # Load pretrained weights to UNet #
-    unet = UNet(im_channels=vae_config['z_channels'],
-                 model_config=ldm_config).to(device)
+    # 좌-중앙-우 이미지를 이어붙임
+    total_width = img_input_resized.width + img_cf.width + img.width
+    combined_img = Image.new('L', (total_width,  h_target ))
+    combined_img.paste(img_input_resized, (0, 0))
+    combined_img.paste(img_cf, (img_input_resized.width, 0))
+    combined_img.paste(img, (img_input_resized.width + img_cf.width, 0))
 
-    # evaluation mode (deactivate drop-out, normalize by trained total mean & variance)
-    unet.eval()
+    save_dir = os.path.join(train_config['task_name'], 'cf_im_samples_11')
+    os.makedirs(save_dir, exist_ok=True)
+    combined_img.save(os.path.join(save_dir, '{}.png'.format(idx)))
 
-    # Checkpoint must exist in infer time.
-    if os.path.exists(os.path.join(train_config['task_name'], train_config['ldm_ckpt_name'])):
-        print('Loaded U-Net checkpoint')
-        # torch.load(.pth): Load pretrained wights(OrderedDict type) saved in .pth file.
-        # pretrained wights(OrderedDict type) -> state_dict
-        # model.load_state_dict(): Load pretrained wights to instantiated model.
-        unet.load_state_dict(torch.load(os.path.join(train_config['task_name'],
-                                                  train_config['ldm_ckpt_name']), map_location=device), strict=False)
+    combined_img.close() # free memories for image object
 
-
-    with torch.no_grad(): # deactivate autograd (not training -> not save gradient)
-        sample(unet, scheduler, train_config, ldm_config,
-               vae_config, diffusion_config, dataset_config, vae)
-
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Arguments for ddpm image generation')
-    parser.add_argument('--config', dest='config_path',
-                        default='config/mnist.yaml', type=str)
-    args = parser.parse_args()
-    infer(args)
