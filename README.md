@@ -1,2 +1,2 @@
-# CFG-LDM
-Classifier-Free Guidance Latent Diffusion Model Code Implementation
+# MNIST Toy Example
+Counterfactual Image Generation Using Latent Diffusion Model
