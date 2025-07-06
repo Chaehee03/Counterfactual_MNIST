@@ -126,6 +126,11 @@ def train(args):
         start_epoch = checkpoint['epoch']
         step_count = checkpoint['step_count']
 
+    best_val = float("inf")
+    min_delta = 1e-5
+    patience = 5
+    wait = 0
+
     for epoch in range(start_epoch, num_epochs):
         recon_losses = []
         kl_losses = []
@@ -263,6 +268,44 @@ def train(args):
                          np.mean(perceptual_losses),
                          np.mean(kl_losses),
                          np.mean(gen_losses)))
+
+        epoch_loss = np.mean(gen_losses)
+
+        if epoch_loss < best_val - min_delta:  # 미세한 수치 오차 허용
+            best_val = epoch_loss
+            wait = 0
+            torch.save({
+                'epoch': epoch,
+                'step_count': step_count,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer_g.state_dict(),
+            }, os.path.join(train_config['task_name'], train_config['vae_autoencoder_best_ckpt_name']))
+
+            torch.save({
+                'epoch': epoch,
+                'step_count': step_count,
+                'model_state_dict': discriminator.state_dict(),
+                'optimizer_state_dict': optimizer_d.state_dict(),
+            }, os.path.join(train_config['task_name'], train_config['vae_discriminator_best_ckpt_name']))
+            print(f" Best checkpoint saved (epoch_loss = {best_val:.4g}, epoch = {epoch + 1})")
+        else:
+            wait += 1
+            if wait >= patience:
+                print(f" Early-stopping at epoch {epoch + 1} (no val improvement for {patience} epochs)")
+                torch.save({
+                    'epoch': epoch,
+                    'step_count': step_count,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer_g.state_dict(),
+                }, os.path.join(train_config['task_name'], train_config['vae_autoencoder_ckpt_name']))
+
+                torch.save({
+                    'epoch': epoch,
+                    'step_count': step_count,
+                    'model_state_dict': discriminator.state_dict(),
+                    'optimizer_state_dict': optimizer_d.state_dict(),
+                }, os.path.join(train_config['task_name'], train_config['vae_discriminator_ckpt_name']))
+                return
 
         torch.save({
                 'epoch': epoch,
