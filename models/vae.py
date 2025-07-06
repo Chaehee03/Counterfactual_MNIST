@@ -112,6 +112,9 @@ class VAE(nn.Module):
         out = self.decoder_norm_out(out)
         out = nn.SiLU()(out)
         out = self.decoder_conv_out(out)
+
+        out = torch.tanh(out)
+        
         return out
 
     def forward(self, x):
