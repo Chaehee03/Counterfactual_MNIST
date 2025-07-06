@@ -4,13 +4,15 @@ import numpy as np
 from tqdm import tqdm
 from torch.optim import Adam
 from dataset.mnist_dataset import MnistDataset
-# from dataset.adni_dataset import AdniDataset
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from models.unet_cond import UNet
 from models.vae import VAE
 from scheduler.linear_noise_scheduler import LinearNoiseScheduler
 from utils.config_utils import *
 from utils.diffusion_utils import *
+from models.classifier import MnistClassifier
+from models.lpips import LPIPS
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -32,7 +34,7 @@ def train(args):
     train_config = config['train_params']
 
     # Create the noise scheduler #
-    scheduler = LinearNoiseScheduler(num_timesteps=train_config['num_timesteps'],
+    scheduler = LinearNoiseScheduler(num_timesteps=diffusion_config['num_timesteps'],
                                      beta_start=diffusion_config['beta_start'],
                                      beta_end=diffusion_config['beta_end'])
 
@@ -50,7 +52,7 @@ def train(args):
                                 im_path = dataset_config['im_path'],
                                 im_size = dataset_config['im_size'],
                                 im_channels = dataset_config['im_channels'],
-                                use_latents=True,
+                                use_latents=False,
                                 latent_path=os.path.join(train_config['task_name'],
                                                          train_config['vae_latent_dir_name']),
                                 condition_config = condition_config,
@@ -71,17 +73,27 @@ def train(args):
     # Load VAE only if latents are not present. (use_latents = False)
     if not im_dataset.use_latents:
         print('Loading vae model as latents are not present.')
-        vae = VAE(im_channels=vae_config['im_channels'],
-                  model_config=ldm_config).to(device)
+        vae = VAE(im_channels=dataset_config['im_channels'],
+                  model_config=vae_config).to(device)
         vae.eval() # don't need training, just create latents
 
         # Load trained vae if checkpoint exists
         if os.path.exists(os.path.join(train_config['task_name'],
-                                       train_config['vae_autoencoder_ckpt_name'])):
+                                       train_config['vae_autoencoder_best_ckpt_name'])):
             print('Loaded vae checkpoint')
-            vae.load_state_dict(torch.load(os.path.join(train_config['task_name'],
-                                                        train_config['vae_autoencoder_ckpt_name']),
-                                           map_location=device))
+            ckpt = torch.load(os.path.join(train_config['task_name'],
+                                           train_config['vae_autoencoder_best_ckpt_name']),
+                              map_location=device)
+            vae.load_state_dict(ckpt['model_state_dict'])
+
+    classifier = MnistClassifier().to(device)
+    classifier_path = os.path.join(train_config['task_name'],
+                                   train_config['classifier_ckpt_name'])
+    classifier.load_state_dict(torch.load(classifier_path))
+    classifier.eval()
+
+    lpips_model = LPIPS().to(device)
+    lpips_model.eval()
 
     # Specify training parameters
     num_epochs = train_config['ldm_epochs']
@@ -95,9 +107,21 @@ def train(args):
         for param in vae.parameters():
             param.requires_grad = False
 
+    best_val = float("inf")
+    min_delta = 1e-4
+    patience = 10
+    wait = 0
+
     # Run training
     for epoch_idx in range(num_epochs): # repeat for epoch times
-        losses = []
+        total_losses = []
+        mse_losses = []
+        cls_losses = []
+        cf_map_losses = []
+        perceptual_losses = []
+        latent_losses = []
+        tv_losses = []
+
         for data in tqdm(data_loader): # train for batch unit
             cond_input = None
             if condition_config is not None:
@@ -110,7 +134,7 @@ def train(args):
             # It is relevant only when latents don't exist.
             if not im_dataset.use_latents:
                 with torch.no_grad():
-                    im, _, _ = vae.encode(im) # im: latents
+                    im, _, _ = vae.encode(im)
 
             ########## Handling Conditional Input ##########
             if 'class' in cond_input:
@@ -133,14 +157,117 @@ def train(args):
             noisy_im = scheduler.add_noise(im, noise, t)
             noise_pred = unet(noisy_im, t, cond_input = cond_input) # U-Net predicts the noise
 
-            loss = criterion(noise_pred, noise) # calculate loss
-            losses.append(loss.item())
-            loss.backward() # backpropagation
-            optimizer.step() # update weights
-        print("Finished epoch: {} | Loss: {:.4f}".format(
-                epoch_idx + 1,
-                np.mean(losses)
-        ))
+            ########## hyperparameters ##########
+            mse_weight = train_config['mse_weight']
+            cls_weight = train_config['cls_weight']
+            l1_weight = train_config['cf_l1_weight']
+            l2_weight = train_config['cf_l2_weight']
+            # cf_perceptual_weight = train_config['cf_perceptual_weight']
+            # latent_dist_weight_1 = train_config['latent_dist_weight_1']
+            # latent_dist_weight_2 = train_config['latent_dist_weight_2']
+            # tv_weight = train_config['tv_weight']
+
+            if epoch_idx < 10:
+                cf_perceptual_weight = 0
+                latent_dist_weight_1 = 0
+                latent_dist_weight_2 = 0
+                tv_weight = 0
+            elif epoch_idx < 20:
+                cf_perceptual_weight = 0.0005
+                latent_dist_weight_1 = 0.0005
+                latent_dist_weight_2 = 0.00005
+                tv_weight = 0.00005
+            elif epoch_idx < 30:
+                cf_perceptual_weight = 0.001
+                latent_dist_weight_1 = 0.001
+                latent_dist_weight_2 = 0.0001
+                tv_weight = 0.0005
+            else:
+                cf_perceptual_weight = 0.002
+                latent_dist_weight_1 = 0.002
+                latent_dist_weight_2 = 0.0002
+                tv_weight = 0.001
+
+            # === 기본 MSE loss (DDPM noise prediction loss) ===
+            loss_mse = criterion(noise_pred, noise)  # calculate loss
+            mse_losses.append(loss_mse.item())
+
+            # === classification loss ===
+            xt, x0_pred = scheduler.sample_prev_timestep(noisy_im, noise_pred, t)
+            cf_latent = x0_pred
+            cf_image = vae.decode(cf_latent)
+            logits = classifier(cf_image) # (B, 10)
+
+            target_label = cond_input['class'].argmax(dim=1).long() # (B,)
+
+            # mask for samples that actually have condition
+            valid_idx = (cond_input['class'].sum(dim=1) != 0)
+            if valid_idx.any():
+                logits_valid = logits[valid_idx]
+                target_label_valid = target_label[valid_idx]
+                loss_cls = F.cross_entropy(logits_valid, target_label_valid)
+            else:
+                loss_cls = torch.zeros_like(logits.sum())
+            cls_losses.append(loss_cls.item())
+
+            # Counterfactual Map Loss
+            input_img = vae.decode(im)
+            cf_map = cf_image - input_img
+            loss_map = (l1_weight * torch.mean(torch.abs(cf_map)) + l2_weight * torch.mean(cf_map ** 2)).to(device)
+            cf_map_losses.append(loss_map.item())
+
+            # Perceptual Loss
+            perceptual_loss = torch.mean(lpips_model(cf_image, input_img))
+            perceptual_losses.append(perceptual_loss.item())
+
+            # Latent Distance Loss
+            loss_latent = latent_dist_weight_1 * torch.mean(torch.abs(cf_latent - im)) + \
+                          latent_dist_weight_2 * torch.mean((cf_latent - im) ** 2)
+            latent_losses.append(loss_latent.item())
+
+            # Total Variation
+            tv_loss = torch.mean(torch.abs(cf_image[:, :, :-1, :] - cf_image[:, :, 1:, :])) + \
+                      torch.mean(torch.abs(cf_image[:, :, :, :-1] - cf_image[:, :, :, 1:]))
+            tv_losses.append(tv_loss.item())
+
+
+            # === total loss ===
+            loss = mse_weight * loss_mse + cls_weight * loss_cls + loss_map + \
+                   cf_perceptual_weight * perceptual_loss + loss_latent + tv_weight * tv_loss
+            total_losses.append(loss.item())
+            loss.backward()
+            optimizer.step()
+
+        print(
+            'Finished epoch: {} | Total Loss: {:.4f}| '
+            'MSE Loss : {:.4f} | CLS Loss : {:.4f} | '
+            'CF Map Loss : {:.4f} | Perceptual Loss : {:.4f} | '
+            'Latent Loss : {:.4f} | Total TV Loss : {:.4f} '.
+            format(epoch_idx + 1,
+                   np.mean(total_losses),
+                   np.mean(mse_losses),
+                   np.mean(cls_losses),
+                   np.mean(cf_map_losses),
+                   np.mean(perceptual_losses),
+                   np.mean(latent_losses),
+                   np.mean(tv_losses)))
+
+        epoch_loss = np.mean(total_losses)
+
+        if epoch_loss < best_val - min_delta:  # 미세한 수치 오차 허용
+            best_val = epoch_loss
+            wait = 0
+            torch.save(unet.state_dict(), os.path.join(train_config['task_name'],
+                                                       train_config['ldm_best_ckpt_name']))
+            print(f" Best checkpoint saved (epoch_loss = {best_val:.4g}, epoch = {epoch_idx + 1})")
+        else:
+            wait += 1
+            if wait >= patience:
+                print(f" Early-stopping at epoch {epoch_idx + 1} (no val improvement for {patience} epochs)")
+                torch.save(unet.state_dict(), os.path.join(train_config['task_name'],
+                                                           train_config['ldm_ckpt_name']))
+                return
+
         torch.save(unet.state_dict(), os.path.join(train_config['task_name'],
                                                     train_config['ldm_ckpt_name'])) # save model
 
