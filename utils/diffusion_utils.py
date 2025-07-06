@@ -15,7 +15,7 @@ def load_latents(latent_path):
 
 def drop_class_condition(class_condition, class_drop_prob, im):
     if class_drop_prob > 0.:
-        claas_drop_mask = torch.zeros((im.shape[0], 1), device=im.device).float().uniform_(0, 1) > class_drop_prob
-        return class_condition * claas_drop_mask
+        class_drop_mask = torch.zeros((im.shape[0], 1), device=im.device).float().uniform_(0, 1) > class_drop_prob
+        return class_condition * class_drop_mask
     else:
         return class_condition
