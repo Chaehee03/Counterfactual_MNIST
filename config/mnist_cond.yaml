@@ -49,8 +49,8 @@ train_params:
   disc_weight: 0.5
   perceptual_weight: 1
   kl_weight: 0.000005
-  ldm_epochs: 100
-  vae_epochs: 10
+  ldm_epochs: 1000
+  vae_epochs: 1000
   num_samples : 25
   num_grid_rows : 5
   ldm_lr: 0.00004
@@ -60,6 +60,19 @@ train_params:
   save_latents: False
   cf_guidance_scale : 1.0
   vae_latent_dir_name: 'vae_latents'
-  ldm_ckpt_name: 'ddpm_ckpt.pth'
-  vae_autoencoder_ckpt_name: 'vae_autoencoder_ckpt.pth'
-  vae_discriminator_ckpt_name: 'vae_discriminator_ckpt.pth'
+  ldm_ckpt_name: 'cf_map_ldm_11.pth'
+  ldm_best_ckpt_name: 'cf_map_best_ldm_11.pth'
+  vae_autoencoder_ckpt_name: 'vae_autoencoder_ckpt_cf.pth'
+  vae_discriminator_ckpt_name: 'vae_discriminator_ckpt_cf.pth'
+  vae_autoencoder_best_ckpt_name: 'vae_autoencoder_best_ckpt_cf.pth'
+  vae_discriminator_best_ckpt_name: 'vae_discriminator_best_ckpt_cf.pth'
+  classifier_batch_size: 256
+  classifier_ckpt_name: 'classifier_ckpt.pth'
+  mse_weight: 0.1
+  cls_weight: 1.0
+  cf_l1_weight: 0.2
+  cf_l2_weight: 0.05
+  cf_perceptual_weight: 0.01
+  latent_dist_weight_1: 0.01
+  latent_dist_weight_2: 0.001
+  tv_weight: 0.02
